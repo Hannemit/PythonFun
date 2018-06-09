@@ -69,7 +69,7 @@ tty.setraw(sys.stdin)
 x = 0
 while x not in [chr(118), chr(104), chr(109)]:
     x=sys.stdin.read(1)[0]
-    print('You pressed\n', x)
+    print('You pressed %s' % x)
 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, orig_settings) 
 
 if x == 'h':
