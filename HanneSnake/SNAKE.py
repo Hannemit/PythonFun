@@ -39,6 +39,7 @@ def get_user_difficulty_input() -> str:
         print(f"You pressed {user_input}")
     return user_input
 
+
 class Snake:
 
     def __init__(self, up, down, left, right, init_speed, factor_speed_increase, ):
@@ -52,6 +53,7 @@ class Snake:
         self.speed = init_speed
         self.factor_speed_increase = factor_speed_increase
         self.last_key_pressed = self.left
+        self.num_food_eaten = 0
         # TODO: each snake starts with an initial direction, and has a self.last_key, the last key that was pressed
         #   then when a new key gets pressed we just apply that to all snakes, and if there's a snake for which that
         #   key is actually an input then it updates last_key and it moves, otherwise it just keeps moving into lastkey
@@ -69,9 +71,7 @@ class Snake:
         ]
 
     def increase_speed(self):
-        self.speed = self.speed * self.factor_speed_increase
-        if self.speed > MAX_SPEED:
-            self.speed = MAX_SPEED
+        self.speed = max(MAX_SPEED, self.speed * self.factor_speed_increase)
 
     def add_new_head(self, new_head_):
         self.snake_body.insert(0, new_head_)  # insert new head in snake
@@ -106,7 +106,8 @@ class Snake:
         self.add_new_head(new_head_position)
 
     def get_tail(self):
-        return  self.snake_body.pop()
+        return self.snake_body.pop()
+
 
 class MediumSnake(Snake):
 
@@ -169,6 +170,10 @@ class Zoo:
 
 
 class Screen:
+    # TODO: this won't work, I had assumed somewhere that snake is just a 'list of coordinates', but
+    #   actually we have x and y coordinates... I guess in theory I could map every (x,y) to a single number
+    #   so (0,0) --> 0, (0, 1) --> 1, etc.. etc.. so flatten the screen.. will make things easier maybe?
+    #   this is a problem atm for checking whether things are in the snakes, and also in the obstacles and foods and stuff
 
     def __init__(self):
         self.window = None
@@ -200,25 +205,27 @@ class Screen:
         self.window.keypad(True)
         self.window.timeout(10)  # TODO: what do here? Need difficulty?? Set later?
 
+    def get_new_object_position(self, x_bounds, y_bounds, not_allowed_in):
+        proposed_object = not_allowed_in[0]
+        while proposed_object in not_allowed_in:
+            proposed_object = [
+                random.randint(x_bounds[0], x_bounds[1]),
+                random.randint(y_bounds[0], y_bounds[1])
+            ]
+
+        return proposed_object
+
     def get_food_position(self):
         snake_coordinates = self.zoo.get_all_coordinates()
-        food = None
-        while food is None:
-            new_food = [
-                random.randint(5, self.height - 5),
-                random.randint(5, self.width - 5)
-            ]
-            if new_food not in snake_coordinates:
-                food = new_food
-        return food
+        return self.get_new_object_position([5, self.height - 5], [5, self.width - 5], snake_coordinates)
 
-    def _add_food_to_screen(self, food_x, food_y):
-        self.window.addch(food_x, food_y, FOOD_TYPE)
-        self.food = [food_x, food_y]
+    def _add_object_to_screen(self, object_x, object_y, object_id: str):
+        self.window.addch(object_x, object_y, object_id)
+        # self.food = [food_x, food_y]
 
     def add_food(self):
         food = self.get_food_position()
-        self._add_food_to_screen(food[0], food[1])
+        self._add_object_to_screen(food[0], food[1], FOOD_TYPE)
 
     def move_snakes(self, new_key):
         # TODO: do we first want to move all snakes, and then check whether food is eaten and
@@ -229,16 +236,28 @@ class Screen:
 
             if single_snake[0] == self.food:
                 # food has been eaten
-                self.add_food()
+                self.add_food()  # snake has grown, do not remove tail
+
+                # every 5 foods, update speed of snake
+                single_snake.num_food_eaten += 1
+                if single_snake.num_food_eaten % 5 == 0:
+                    single_snake.increase_speed()
             else:
                 tail = single_snake.get_tail()
-                self.remove_pixel(tail)
+                self.remove_pixel(tail)  # snake moves forward, remove tail
 
     def remove_pixel(self, pixel_coord):
         self.window.addch(pixel_coord[0], pixel_coord[1], ' ')
 
     def update_window(self):
         pass
+
+    def add_obstacle(self):
+        # TODO: also make obstacle appear not directly in front of snake!!
+        snake_coordinates = self.zoo.get_all_coordinates()
+        obstacle_pos = self.get_new_object_position([1, self.height - 5], [1, self.width - 5], snake_coordinates)
+        self._add_object_to_screen(obstacle_pos[0], obstacle_pos[1], curses.ACS_LEQUAL)
+        self.obstacle_coordinates.append(obstacle_pos)
 
     def get_screen_dimensions(self):
         return self.screen.getmaxyx()
@@ -251,6 +270,14 @@ class Screen:
         print('What difficulty do you want to play??\nvery hard (v)\nhard (h)\nmedium (m)\n')
         print('Give your input (v, h or m): ')
 
+    def print_win_message(self) -> None:
+        self.window.addch(self.height // 2, self.width // 2 - 9, "CONGRATS! YOU WIN!")
+        time.sleep(5)
+
+    def print_lost_message(self):
+        self.window.addch(self.height // 2, self.width // 2 - 9, "YOU LOSE")
+        time.sleep(5)
+
     @staticmethod
     def set_up_colours():
         curses.start_color()
@@ -261,6 +288,21 @@ class Screen:
         curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_GREEN)
         curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_YELLOW)
         curses.init_pair(5, curses.COLOR_RED, curses.COLOR_RED)
+
+    def game_lost(self):
+        # check whether game is lost, i.e. check whether snake in obstacle or wall
+        snake_coordinates = self.zoo.get_all_coordinates()
+
+        # check hitting wall TODO: only need to check new heads
+        boundaries = [0, self.width, self.height]
+        if any(boundary in snake_coordinates for boundary in boundaries):
+            return True
+
+        # check obstacles
+        if any(obs in snake_coordinates for obs in self.obstacle_coordinates):
+            return True
+
+        return False
 
 
 def play_game():
@@ -286,37 +328,27 @@ def play_game():
         new_key = old_key if new_key == -1 else new_key  # get either nothing or next key. -1 is returned if no input (and then the key remains the same)
 
         # Move head of snake
-        screen.move_snake(old_key, new_key)
-        try_head = MoveHead(key, snake) #propose a new head position
-        if try_head != -1: #if up, down, left, right or pause
-            new_head = try_head
-        else: #if any other key, pretend nothing happened and just use the old key again
-            new_head = MoveHead(old_key, snake)
-            key = old_key
+        screen.move_snakes(new_key)
 
-        snake.insert(0, new_head) #insert new head in snake
+        # update window refresh rate
+        screen.window.timeout()
 
-        if snake[0] == food:
-            nFoodsEaten += 1; nb = 0
-            w.addstr(0,0, str('%d' % nFoodsEaten))
-            w.refresh
+        # add obstacles
+        if screen.zoo.snake_list[0].num_food_eaten % 2 == 0:
+            screen.add_food()
 
-            food = None
-            while food is None: #try to generate new food, if None then try again, etc...
-                new_food = [
-                    random.randint(5, sh - 5),
-                    random.randint(5, sw - 5)
-                ]
-                food = new_food if new_food not in snake else None
+        # game won
+        if screen.zoo.snake_list[0].num_food_eaten == 20:
+            screen.print_win_message()
+            curses.endwin()
+            break
 
-            w.addch(food[0], food[1], food_type) #add the food to the screen
-        else: #only remove tail if we did not hit some food (we want snake to become longer if we did hit food)
-            tail = snake.pop() #grab tail coordinates (last item in snake) and remove it from snake
-            w.addch(tail[0], tail[1], ' ') #make current tail disappear (as we just moved away)
+        # game lost
+        if screen.game_lost:
+            screen.print_lost_message()
+            curses.endwin()
+            break
 
-        #update the snake speed.
-        new_speed = UpdateSpeed(nFoodsEaten, factorSpeed, init_speed)
-        w.timeout(new_speed)
 
 
 def generate_food(width, height, excluded):
